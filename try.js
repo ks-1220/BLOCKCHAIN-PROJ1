@@ -1,0 +1,320 @@
+// Constants for Pinata and Smart Contract
+const PINATA_API_KEY = 'a456c69f1da325f277a8';
+const PINATA_SECRET_API_KEY = 'b75da41611e039df09c13d3789b862ed8dfae4280a0737734f505d009f5e822e';
+const CONTRACT_ADDRESS = '0x7Fb86B4e7fE2cc358a734Cd4F9cD29D3f596a88a';
+
+
+const ABI = [
+	{
+		"inputs": [
+			{
+				"internalType": "string",
+				"name": "_cid",
+				"type": "string"
+			},
+			{
+				"internalType": "uint256",
+				"name": "_unlockTime",
+				"type": "uint256"
+			}
+		],
+		"name": "lockFile",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "address",
+				"name": "",
+				"type": "address"
+			}
+		],
+		"name": "files",
+		"outputs": [
+			{
+				"internalType": "string",
+				"name": "cid",
+				"type": "string"
+			},
+			{
+				"internalType": "uint256",
+				"name": "unlockTime",
+				"type": "uint256"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "address",
+				"name": "user",
+				"type": "address"
+			}
+		],
+		"name": "getUnlockTime",
+		"outputs": [
+			{
+				"internalType": "uint256",
+				"name": "",
+				"type": "uint256"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [],
+		"name": "retrieveFile",
+		"outputs": [
+			{
+				"internalType": "string",
+				"name": "",
+				"type": "string"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	}
+];
+
+let web3, contract, account;
+
+document.getElementById("connectWallet").onclick = async () => {
+    if (typeof window.ethereum !== 'undefined') {
+      try {
+        web3 = new Web3(window.ethereum);
+        await window.ethereum.request({ method: 'eth_requestAccounts' });
+        const accounts = await web3.eth.getAccounts();
+        account = accounts[0];
+        document.getElementById("walletAddress").textContent = `Wallet: ${account}`;
+        contract = new web3.eth.Contract(ABI, CONTRACT_ADDRESS);
+        notify("✅ Wallet connected!", "success");
+      } catch (err) {
+        notify("❌ Wallet connection denied!", "error");
+        console.error(err);
+      }
+    } else {
+      // 🔁 MetaMask not installed - show popup
+      const installConfirmed = confirm("🦊 MetaMask is not installed!\nWould you like to install it now?");
+      if (installConfirmed) {
+        // Redirect user to MetaMask installation page
+        window.open("https://metamask.io/download.html", "_blank");
+      } else {
+        notify("⚠️ MetaMask is required to continue!", "warn");
+      }
+    }
+  };
+  
+
+document.getElementById("lockFile").onclick = async () => {
+  const fileInput = document.getElementById("fileInput").files[0];
+  const unlockInput = document.getElementById("unlockTime").value;
+
+  if (!fileInput || !unlockInput) {
+    notify("⚠️ Please upload a file and select unlock time!", "warn");
+    return;
+  }
+
+  const unlockTime = Math.floor(new Date(unlockInput).getTime() / 1000);
+  const now = Math.floor(Date.now() / 1000);
+
+  if (unlockTime <= now) {
+    notify("⚠️ Unlock time must be in the future!", "warn");
+    return;
+  }
+
+  // 🔐 Encrypt file using AES-GCM
+  const key = await crypto.subtle.generateKey(
+    { name: 'AES-GCM', length: 256 },
+    true,
+    ['encrypt', 'decrypt']
+  );
+  const rawKey = await crypto.subtle.exportKey('raw', key);
+  const base64Key = btoa(String.fromCharCode(...new Uint8Array(rawKey)));
+  alert(`🔐 Your Decryption Key:\n${base64Key}`);
+
+  
+
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const fileBuffer = await fileInput.arrayBuffer();
+  const encryptedBuffer = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    fileBuffer
+  );
+
+
+  
+  
+  const safeKey = toBase58Safe(new Uint8Array(rawKey));
+  alert(`🔐 Your Safe Decryption Key:\n${safeKey}`);
+  
+  const encryptedBlob = new Blob([iv, new Uint8Array(encryptedBuffer)], {
+    type: 'application/octet-stream'
+  });
+
+  // 🚀 Upload encrypted blob to Pinata
+  notify("🔁 Uploading encrypted file to IPFS...", "info");
+
+  const formData = new FormData();
+  formData.append('file', encryptedBlob, `${fileInput.name}.enc`);
+
+  const metadata = JSON.stringify({ name: `${fileInput.name}.enc` });
+  formData.append('pinataMetadata', metadata);
+
+  const options = JSON.stringify({ cidVersion: 1 });
+  formData.append('pinataOptions', options);
+
+  try {
+    const response = await fetch("https://api.pinata.cloud/pinning/pinFileToIPFS", {
+      method: "POST",
+      headers: {
+        pinata_api_key: PINATA_API_KEY,
+        pinata_secret_api_key: PINATA_SECRET_API_KEY,
+      },
+      body: formData,
+    });
+
+    const result = await response.json();
+    const cid = result.IpfsHash;
+    notify("🔐 Storing CID on blockchain and locking file...", "info");
+
+    await contract.methods.lockFile(cid, unlockTime).send({ from: account });
+
+    notify("✅ File encrypted, stored, and locked!", "success");
+    startCountdown(unlockTime);
+    //document.getElementById("cidDisplay").innerText = `CID: ${cid}`;
+    //document.getElementById("keyDisplay").innerText = `Key: ${base64Key}`;
+  } catch (err) {
+    console.error(err);
+    notify("❌ Error locking file: " + err.message, "error");
+  }
+
+  
+};
+
+document.getElementById("retrieveFile").onclick = async () => {
+    try {
+        const fileData = await contract.methods.files(account).call();
+        const currentTime = Math.floor(Date.now() / 1000);
+
+        if (!fileData.cid || fileData.cid === "") {
+            notify("⚠️ No file locked yet for this wallet!", "warn");
+            return;
+        }
+
+        if (currentTime < fileData.unlockTime) {
+            const readableTime = new Date(fileData.unlockTime * 1000).toLocaleString();
+            notify(`⏳ File is still locked! Try again after: ${readableTime}`, "warn");
+            return;
+        }
+
+        let userKey = prompt("🔑 Enter your decryption key (base64):").trim();
+        if (!userKey) {
+            notify("❌ Decryption key is required!", "error");
+            return;
+        }
+
+        // 🔍 Check if the key is a valid Base64 string before decoding
+        if (!/^[A-Za-z0-9+/=]+$/.test(userKey)) {
+            notify("❌ Invalid Base64 format. Check your key!", "error");
+            return;
+        }
+
+        const url = `https://gateway.pinata.cloud/ipfs/${fileData.cid}`;
+        const response = await fetch(url);
+        const encryptedArrayBuffer = await response.arrayBuffer();
+
+        const encryptedBytes = new Uint8Array(encryptedArrayBuffer);
+        const iv = encryptedBytes.slice(0, 12); // first 12 bytes = IV
+        const data = encryptedBytes.slice(12);  // remaining = encrypted content
+
+        try {
+            const rawKey = Uint8Array.from(atob(userKey), c => c.charCodeAt(0));
+            const cryptoKey = await crypto.subtle.importKey(
+                'raw',
+                rawKey,
+                'AES-GCM',
+                true,
+                ['decrypt']
+            );
+
+            const decryptedBuffer = await crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv },
+                cryptoKey,
+                data
+            );
+
+            const blob = new Blob([decryptedBuffer]);
+            const downloadLink = document.createElement("a");
+            downloadLink.href = URL.createObjectURL(blob);
+            downloadLink.download = "decrypted_file";
+            downloadLink.click();
+
+            notify("🎉 File decrypted and downloaded successfully!", "success");
+            
+        } catch (decryptionError) {
+            notify("❌ Decryption failed: Incorrect key!", "error");
+        }
+    } catch (err) {
+        console.error(err);
+        notify("❌ Retrieval/Decryption failed: " + err.message, "error");
+    }
+};
+
+  
+/*function notify(message, type = "info") {
+  const resultDiv = document.getElementById("result");
+  const color = type === "error" ? "red" : type === "warn" ? "#FFA500" : type === "success" ? "green" : "#007bff";
+  resultDiv.innerHTML = `<div style="margin-top: 10px; color: ${color}; font-weight: 600;">${message}</div>`;
+}
+
+function notify(message, type = "info") {
+    const resultDiv = document.getElementById("result");
+    if (!resultDiv) {
+      console.error("❌ Error: 'result' element not found in the DOM.");
+      return;
+    }
+  
+    const color = type === "error" ? "red" :
+                  type === "warn" ? "#FFA500" :
+                  type === "success" ? "green" : "#007bff";
+  
+    resultDiv.innerHTML = `<div style="margin-top: 10px; color: ${color}; font-weight: 600;">${message}</div>`;
+  }*/
+
+    const notify = (message, type = "info") => {
+        const notificationElement = document.getElementById("notification");
+        if (notificationElement) {
+            notificationElement.innerText = message;
+            notificationElement.className = type; // Assuming you have CSS for styling
+        } else {
+            console.warn("Notification element not found:", message);
+        }
+    };
+
+
+
+function startCountdown(unlockTime) {
+  const timerEl = document.getElementById("timer");
+  const interval = setInterval(() => {
+    const now = Math.floor(Date.now() / 1000);
+    const remaining = unlockTime - now;
+
+    if (remaining > 0) {
+      const mins = Math.floor(remaining / 60);
+      const secs = remaining % 60;
+      timerEl.textContent = `⏳ Time left: ${mins}m ${secs}s`;
+    } else {
+      clearInterval(interval);
+      timerEl.textContent = "✅ File is now ready for retrieval!";
+    }
+  }, 1000);
+}
+
+
+  
