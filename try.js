@@ -106,10 +106,10 @@ document.getElementById("connectWallet").onclick = async () => {
         notify("⚠️ MetaMask is required to continue!", "warn");
       }
     }
-  };
+};
   
 
-  document.getElementById("lockFile").onclick = async () => {
+document.getElementById("lockFile").onclick = async () => {
     const fileInput = document.getElementById("fileInput").files[0];
     const unlockInput = document.getElementById("unlockTime").value;
   
@@ -175,85 +175,79 @@ document.getElementById("connectWallet").onclick = async () => {
       console.error(err);
       notify("❌ Error locking file: " + err.message, "error");
     }
-  };
-
-
-
-
-  document.getElementById("retrieveFile").onclick = async () => {
-    try {
-        const fileData = await contract.methods.files(account).call();
-        const currentTime = Math.floor(Date.now() / 1000);
-
-        if (!fileData.cid || fileData.cid === "") {
-            notify("⚠️ No file locked yet for this wallet!", "warn");
-            return;
-        }
-
-        if (currentTime < fileData.unlockTime) {
-            const readableTime = new Date(fileData.unlockTime * 1000).toLocaleString();
-            notify(`⏳ File is still locked! Try again after: ${readableTime}`, "warn");
-            return;
-        }
-
-        let userKey = prompt("🔑 Enter your decryption key (base64):").trim();
-        if (!userKey) {
-            notify("❌ Decryption key is required!", "error");
-            return;
-        }
-
-        // 🔍 Check if the key is a valid Base64 string before decoding
-        if (!/^[A-Za-z0-9+/=]+$/.test(userKey)) {
-            notify("❌ Invalid Base64 format. Check your key!", "error");
-            return;
-        }
-
-        const url = `https://gateway.pinata.cloud/ipfs/${fileData.cid}`;
-        const response = await fetch(url);
-        const encryptedArrayBuffer = await response.arrayBuffer();
-
-        const encryptedBytes = new Uint8Array(encryptedArrayBuffer);
-        const iv = encryptedBytes.slice(0, 12); // first 12 bytes = IV
-        const data = encryptedBytes.slice(12);  // remaining = encrypted content
-
-        try {
-            const rawKey = Uint8Array.from(atob(userKey), c => c.charCodeAt(0));
-            const cryptoKey = await crypto.subtle.importKey(
-                'raw',
-                rawKey,
-                'AES-GCM',
-                true,
-                ['decrypt']
-            );
-
-            const decryptedBuffer = await crypto.subtle.decrypt(
-                { name: 'AES-GCM', iv },
-                cryptoKey,
-                data
-            );
-
-            const blob = new Blob([decryptedBuffer]);
-            const downloadLink = document.createElement("a");
-            downloadLink.href = URL.createObjectURL(blob);
-            downloadLink.download = "decrypted_file";
-            downloadLink.click();
-
-            notify("🎉 File decrypted and downloaded successfully!", "success");
-            
-        } catch (decryptionError) {
-            notify("❌ Decryption failed: Incorrect key!", "error");
-        }
-    } catch (err) {
-        console.error(err);
-        notify("❌ Retrieval/Decryption failed: " + err.message, "error");
-    }
 };
 
-function notify(message, type = "info") {
+
+
+
+document.getElementById("retrieveFile").onclick = async () => {
+    try {
+      const fileData = await contract.methods.files(account).call();
+      const currentTime = Math.floor(Date.now() / 1000);
+  
+      if (!fileData.cid || fileData.cid === "") {
+        notify("⚠️ No file locked yet for this wallet!", "warn");
+        return;
+      }
+  
+      if (currentTime < fileData.unlockTime) {
+        const readableTime = new Date(fileData.unlockTime * 1000).toLocaleString();
+        notify(`⏳ File is still locked! Try again after: ${readableTime}`, "warn");
+        return;
+      }
+  
+      let userKey = prompt("🔑 Enter your decryption key (exactly as shown):");
+      if (!userKey || userKey.trim() === "") {
+        notify("❌ Decryption key is required!", "error");
+        return;
+      }
+  
+      const url = `https://gateway.pinata.cloud/ipfs/${fileData.cid}`;
+      const response = await fetch(url);
+      const encryptedText = await response.text();
+  
+      try {
+        const decrypted = CryptoJS.AES.decrypt(encryptedText, userKey);
+        const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
+  
+        if (!decryptedText) {
+          throw new Error("Decryption failed or incorrect key");
+        }
+  
+        const blob = new Blob([decryptedText], { type: "text/plain" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = "decrypted_file.txt";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+  
+        notify("🎉 File decrypted and downloaded successfully!", "success");
+      } catch (err) {
+        console.error(err);
+        notify("❌ Decryption failed: Incorrect key or corrupted file", "error");
+      }
+    } catch (err) {
+      console.error(err);
+      notify("❌ Retrieval/Decryption failed: " + err.message, "error");
+    }
+};
+  
+/*function notify(message, type = "info") {
   const resultDiv = document.getElementById("result");
   const color = type === "error" ? "red" : type === "warn" ? "#FFA500" : type === "success" ? "green" : "#007bff";
   resultDiv.innerHTML = `<div style="margin-top: 10px; color: ${color}; font-weight: 600;">${message}</div>`;
-}
+}*/
+
+const notify = (message, type = "info") => {
+    const notificationElement = document.getElementById("notification");
+    if (notificationElement) {
+        notificationElement.innerText = message;
+        notificationElement.className = type; // Assuming you have CSS for styling
+    } else {
+        console.warn("Notification element not found:", message);
+        }
+};
 
 function startCountdown(unlockTime) {
   const timerEl = document.getElementById("timer");
