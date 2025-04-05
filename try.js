@@ -1,4 +1,3 @@
-// Constants for Pinata and Smart Contract
 const PINATA_API_KEY = 'a456c69f1da325f277a8';
 const PINATA_SECRET_API_KEY = 'b75da41611e039df09c13d3789b862ed8dfae4280a0737734f505d009f5e822e';
 const CONTRACT_ADDRESS = '0x7Fb86B4e7fE2cc358a734Cd4F9cD29D3f596a88a';
@@ -110,94 +109,78 @@ document.getElementById("connectWallet").onclick = async () => {
   };
   
 
-document.getElementById("lockFile").onclick = async () => {
-  const fileInput = document.getElementById("fileInput").files[0];
-  const unlockInput = document.getElementById("unlockTime").value;
-
-  if (!fileInput || !unlockInput) {
-    notify("⚠️ Please upload a file and select unlock time!", "warn");
-    return;
-  }
-
-  const unlockTime = Math.floor(new Date(unlockInput).getTime() / 1000);
-  const now = Math.floor(Date.now() / 1000);
-
-  if (unlockTime <= now) {
-    notify("⚠️ Unlock time must be in the future!", "warn");
-    return;
-  }
-
-  // 🔐 Encrypt file using AES-GCM
-  const key = await crypto.subtle.generateKey(
-    { name: 'AES-GCM', length: 256 },
-    true,
-    ['encrypt', 'decrypt']
-  );
-  const rawKey = await crypto.subtle.exportKey('raw', key);
-  const base64Key = btoa(String.fromCharCode(...new Uint8Array(rawKey)));
-  alert(`🔐 Your Decryption Key:\n${base64Key}`);
-
+  document.getElementById("lockFile").onclick = async () => {
+    const fileInput = document.getElementById("fileInput").files[0];
+    const unlockInput = document.getElementById("unlockTime").value;
   
-
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const fileBuffer = await fileInput.arrayBuffer();
-  const encryptedBuffer = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv },
-    key,
-    fileBuffer
-  );
-
-
+    if (!fileInput || !unlockInput) {
+      notify("⚠️ Please upload a file and select unlock time!", "warn");
+      return;
+    }
   
+    const unlockTime = Math.floor(new Date(unlockInput).getTime() / 1000);
+    const now = Math.floor(Date.now() / 1000);
   
-  const safeKey = toBase58Safe(new Uint8Array(rawKey));
-  alert(`🔐 Your Safe Decryption Key:\n${safeKey}`);
+    if (unlockTime <= now) {
+      notify("⚠️ Unlock time must be in the future!", "warn");
+      return;
+    }
   
-  const encryptedBlob = new Blob([iv, new Uint8Array(encryptedBuffer)], {
-    type: 'application/octet-stream'
-  });
-
-  // 🚀 Upload encrypted blob to Pinata
-  notify("🔁 Uploading encrypted file to IPFS...", "info");
-
-  const formData = new FormData();
-  formData.append('file', encryptedBlob, `${fileInput.name}.enc`);
-
-  const metadata = JSON.stringify({ name: `${fileInput.name}.enc` });
-  formData.append('pinataMetadata', metadata);
-
-  const options = JSON.stringify({ cidVersion: 1 });
-  formData.append('pinataOptions', options);
-
-  try {
-    const response = await fetch("https://api.pinata.cloud/pinning/pinFileToIPFS", {
-      method: "POST",
-      headers: {
-        pinata_api_key: PINATA_API_KEY,
-        pinata_secret_api_key: PINATA_SECRET_API_KEY,
-      },
-      body: formData,
-    });
-
-    const result = await response.json();
-    const cid = result.IpfsHash;
-    notify("🔐 Storing CID on blockchain and locking file...", "info");
-
-    await contract.methods.lockFile(cid, unlockTime).send({ from: account });
-
-    notify("✅ File encrypted, stored, and locked!", "success");
-    startCountdown(unlockTime);
-    //document.getElementById("cidDisplay").innerText = `CID: ${cid}`;
-    //document.getElementById("keyDisplay").innerText = `Key: ${base64Key}`;
-  } catch (err) {
-    console.error(err);
-    notify("❌ Error locking file: " + err.message, "error");
-  }
-
+    notify("🔐 Encrypting file...", "info");
   
-};
+    try {
+      // Generate AES key
+      const aesKey = CryptoJS.lib.WordArray.random(16).toString(); // 128-bit key
+      const reader = new FileReader();
+  
+      reader.onload = async (e) => {
+        const fileContent = e.target.result;
+        const encrypted = CryptoJS.AES.encrypt(fileContent, aesKey).toString();
+  
+        const blob = new Blob([encrypted], { type: "text/plain" });
+        const formData = new FormData();
+        formData.append('file', blob, "encrypted_file.txt");
+  
+        alert("🔐 Your decryption key (save it safely!):\n\n" + aesKey);
+  
+        notify("⏫ Uploading encrypted file to IPFS...", "info");
+  
+        const response = await fetch("https://api.pinata.cloud/pinning/pinFileToIPFS", {
+          method: "POST",
+          headers: {
+            pinata_api_key: PINATA_API_KEY,
+            pinata_secret_api_key: PINATA_SECRET_API_KEY,
+          },
+          body: formData,
+        });
+  
+        const result = await response.json();
+  
+        if (!result.IpfsHash) {
+          throw new Error("❌ Failed to upload to Pinata");
+        }
+  
+        const cid = result.IpfsHash;
+  
+        notify("📦 Storing CID on blockchain and locking...", "info");
+  
+        await contract.methods.lockFile(cid, unlockTime).send({ from: account });
+  
+        notify("✅ File encrypted, stored, and locked!", "success");
+        startCountdown(unlockTime);
+      };
+  
+      reader.readAsText(fileInput);
+    } catch (err) {
+      console.error(err);
+      notify("❌ Error locking file: " + err.message, "error");
+    }
+  };
 
-document.getElementById("retrieveFile").onclick = async () => {
+
+
+
+  document.getElementById("retrieveFile").onclick = async () => {
     try {
         const fileData = await contract.methods.files(account).call();
         const currentTime = Math.floor(Date.now() / 1000);
@@ -266,38 +249,11 @@ document.getElementById("retrieveFile").onclick = async () => {
     }
 };
 
-  
-/*function notify(message, type = "info") {
+function notify(message, type = "info") {
   const resultDiv = document.getElementById("result");
   const color = type === "error" ? "red" : type === "warn" ? "#FFA500" : type === "success" ? "green" : "#007bff";
   resultDiv.innerHTML = `<div style="margin-top: 10px; color: ${color}; font-weight: 600;">${message}</div>`;
 }
-
-function notify(message, type = "info") {
-    const resultDiv = document.getElementById("result");
-    if (!resultDiv) {
-      console.error("❌ Error: 'result' element not found in the DOM.");
-      return;
-    }
-  
-    const color = type === "error" ? "red" :
-                  type === "warn" ? "#FFA500" :
-                  type === "success" ? "green" : "#007bff";
-  
-    resultDiv.innerHTML = `<div style="margin-top: 10px; color: ${color}; font-weight: 600;">${message}</div>`;
-  }*/
-
-    const notify = (message, type = "info") => {
-        const notificationElement = document.getElementById("notification");
-        if (notificationElement) {
-            notificationElement.innerText = message;
-            notificationElement.className = type; // Assuming you have CSS for styling
-        } else {
-            console.warn("Notification element not found:", message);
-        }
-    };
-
-
 
 function startCountdown(unlockTime) {
   const timerEl = document.getElementById("timer");
@@ -315,6 +271,3 @@ function startCountdown(unlockTime) {
     }
   }, 1000);
 }
-
-
-  
